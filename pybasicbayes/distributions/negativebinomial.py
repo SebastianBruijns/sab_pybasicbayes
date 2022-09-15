@@ -11,7 +11,7 @@ __all__ = [
 import numpy as np
 from numpy import newaxis as na
 import scipy.special as special
-from scipy.special import logsumexp
+from scipy.misc import logsumexp
 from warnings import warn
 
 from pybasicbayes.abstractions import Distribution, GibbsSampling, \
@@ -370,6 +370,9 @@ class NegativeBinomialIntegerR2(_NegativeBinomialBase,MeanField,MeanFieldSVI,Gib
     def _r_vlb(self):
         return np.exp(self.rho_mf).dot(self.rho_0) \
                 - np.exp(self.rho_mf).dot(self.rho_mf)
+
+    def num_parameters(self):
+        return 2
 
     def meanfieldupdate(self,data,weights):
         for d in self._fixedr_distns:

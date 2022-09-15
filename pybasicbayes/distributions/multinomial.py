@@ -2,9 +2,12 @@ from __future__ import division
 from builtins import zip
 from builtins import map
 from builtins import range
+import copy
 __all__ = ['Categorical', 'CategoricalAndConcentration', 'Multinomial',
-           'MultinomialAndConcentration', 'GammaCompoundDirichlet', 'CRP']
+           'MultinomialAndConcentration', 'GammaCompoundDirichlet', 'CRP',
+           'Input_Categorical', 'Input_Categorical_Normal']
 
+from pybasicbayes.distributions import gaussian
 import numpy as np
 from warnings import warn
 import scipy.stats as stats
@@ -104,7 +107,16 @@ class Categorical(GibbsSampling, MeanField, MeanFieldSVI, MaxLikelihood, MAP):
 
     def resample(self,data=[],counts=None):
         counts = self._get_statistics(data) if counts is None else counts
-        self.weights = np.random.dirichlet(self.alphav_0 + counts)
+        try:
+            self.weights = np.random.dirichlet(self.alphav_0 + counts)
+        except ZeroDivisionError as e:
+            # print("ZeroDivisionError {}".format(e))
+            self.weights = np.random.dirichlet(self.alphav_0 + 0.01 + counts)
+        except ValueError as e:
+            # print("ValueError {}".format(e))
+            self.weights = np.random.dirichlet(self.alphav_0 + 0.01 + counts)
+        if np.isnan(self.weights).any():
+            self.weights = np.random.dirichlet(self.alphav_0 + 0.01 + counts)
         np.clip(self.weights, np.spacing(1.), np.inf, out=self.weights)
         # NOTE: next line is so we can use Gibbs sampling to initialize mean field
         self._alpha_mf = self.weights * self.alphav_0.sum()
@@ -363,7 +375,13 @@ class CRP(GibbsSampling):
     def resample(self,data=[],niter=50):
         for itr in range(niter):
             a_n, b_n = self._posterior_hypparams(*self._get_statistics(data))
-            self.concentration = np.random.gamma(a_n,scale=1./b_n)
+            try:
+                self.concentration = np.random.gamma(a_n,scale=1./b_n)
+            except Exception:
+                print("have to apply weird bug fix in /apps/conda/sbruijns/envs/hdp_pg_env/lib/python3.4/site-packages/pybasicbayes/distributions/multinomial")
+                self.concentration += 0.00001
+                a_n, b_n = self._posterior_hypparams(*self._get_statistics(data))
+                self.concentration = np.random.gamma(a_n,scale=1./b_n)
 
     def _posterior_hypparams(self,sample_numbers,total_num_distinct):
         # NOTE: this is a stochastic function: it samples auxiliary variables
@@ -477,3 +495,155 @@ class GammaCompoundDirichlet(CRP):
                         / (np.arange(n)+self.concentration*self.K*self.weighted_cols[j])).sum()
             return counts.sum(1), m
 
+
+class Input_Categorical():
+    '''
+    This class enables an input output HMM structure, where the observation distribution
+    that we sample from is dictated by the input at that time step, so this input must be an
+    integer. Parameters are weights and the prior is a Dirichlet distribution.
+    Inspired by Matt's other distributions.
+
+    Hyperparaemters:
+
+        TODO
+
+    Parameters:
+        [weights, a vector encoding a finite, multidimensional pmf]
+    '''
+    def __init__(self, n_inputs, n_outputs, modulate=100):
+
+        self.n_inputs = n_inputs
+        self.n_outputs = n_outputs  # could be made different for different inputs
+        self.modulate = modulate  # high modulation (take modulo of first row data) means no effect, modulation = stimulus set size means no conditinoning
+        #print("Input data is taken mod {}".format(self.modulate))
+        self.weights = np.zeros((n_inputs, n_outputs))
+
+        self.resample()  # intialize from prior
+
+    def rvs(self, input):
+        input = copy.copy(input)
+        input = input % self.modulate
+        types, counts = np.unique(input, return_counts=True)
+        output = np.zeros_like(input)
+        for t, c in zip(types, counts):
+            temp = np.random.choice(self.n_outputs, c, p=self.weights[t])
+            output[input == t] = temp
+        return np.array((input, output)).T
+
+    def log_likelihood(self, x):
+        x = copy.copy(x)
+        x[:, 0] %= self.modulate
+        out = np.zeros_like(x, dtype=np.double)
+        err = np.seterr(divide='ignore')
+        out = np.log(self.weights)[tuple(x.T)]
+        np.seterr(**err)
+        return out
+
+    # Gibbs sampling
+    def resample(self, data=[]):
+        counts = self._get_statistics(data)
+
+        for i in range(self.n_inputs):
+            self.weights[i] = np.random.dirichlet(np.ones(self.n_outputs) + counts[i])
+
+    def _get_statistics(self, data):
+        # TODO: improve
+        data = copy.copy(data)
+        counts = np.zeros_like(self.weights, dtype=np.int32)
+        if isinstance(data, np.ndarray):
+            assert len(data.shape) == 2
+            data[:, 0] %= self.modulate
+            for d in data:
+                counts[tuple(d)] += 1
+        else:
+            for d in data:
+                d[:, 0] %= self.modulate
+                for subd in d:
+                    counts[tuple(subd)] += 1
+        return counts
+
+
+    ### Max likelihood
+
+    def max_likelihood(self,data,weights=None):
+        warn('ML not implemented')
+
+    def MAP(self,data,weights=None):
+        warn('MAP not implemented')
+
+
+class Input_Categorical_Normal():
+    '''
+    This class enables an input output HMM structure, where the observation distribution
+    that we sample from is dictated by the input at that time step, so this input must be an
+    integer.
+    Here, One output is from a Categorical, the other from a normal.
+    Parameters are weights and the prior is a Dirichlet distribution.
+    Inspired by Matt's other distributions.
+
+    Hyperparaemters:
+
+        TODO
+
+    Parameters:
+        [weights, a vector encoding a finite, multidimensional pmf]
+    '''
+    def __init__(self, n_inputs, n_outputs, normal_hypparams):
+
+        self.n_inputs = n_inputs
+        self.n_outputs = n_outputs  # could be made different for different inputs
+        self.cats = Input_Categorical(n_inputs, n_outputs)
+        self.normals = [gaussian.Gaussian(**normal_hypparams) for state in range(n_inputs)]
+
+    def rvs(self, input):
+        types, counts = np.unique(input, return_counts=True)
+        output = np.zeros((len(input), 2))
+        output[:, 0] = self.cats.rvs(input)[:, 1]
+
+        for t, c in zip(types, counts):
+            temp = self.normals[t].rvs(c)
+            output[input == t, 1] = temp[:, 0]
+
+        return np.concatenate((np.array(input)[None].T, output), axis=1)
+
+    def log_likelihood(self, x):
+        out = self.cats.log_likelihood(x[:, [0, 1]].astype(int))
+
+        # Filter out negative or 0 reaction times
+        bad_nums = x[:, 2] == -np.inf
+        x[bad_nums, 2] = 0
+
+        means = np.zeros(x.shape[0])
+        stds = np.zeros(x.shape[0])
+        normal_ll = np.zeros(x.shape[0])
+        for i, n in enumerate(self.normals):
+            mask = x[:, 0] == i
+            # don't consider negative RTs in ll calculation
+            means[mask], stds[mask] = n.mu, n.sigma[0]
+
+        normal_ll = stats.norm().logpdf((x[:, 2] - means) / stds) / stds
+        normal_ll[bad_nums] = 0
+
+        return out
+
+    # Gibbs sampling
+    def resample(self, data=[]):
+        if isinstance(data, np.ndarray):
+            pass
+        if isinstance(data, list):
+            data = np.concatenate(data)
+        self.cats.resample(data[:, [0, 1]].astype(int))
+
+        bad_nums = data[:, 2] == -np.inf
+        for i, n in enumerate(self.normals):
+            mask = data[:, 0] == i
+            n.resample(data=data[np.logical_and(mask, ~bad_nums), 2])
+
+
+    ### Max likelihood
+
+    def max_likelihood(self,data,weights=None):
+        warn('ML not implemented')
+
+    def MAP(self,data,weights=None):
+        warn('MAP not implemented')

@@ -10,3 +10,4 @@ from .multinomial import *
 from .negativebinomial import *
 from .geometric import *
 from .poisson import *
+from .dynamic_glm import *
