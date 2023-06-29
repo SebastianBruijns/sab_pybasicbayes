@@ -84,8 +84,11 @@ class Dynamic_GLM(GibbsSampling):
         return outputs
 
     def log_likelihood(self, input, timepoint):
+        """
+        Given input from a single session (a matrix containing regressors and responses) and the timepoint information from that session, return log-likelihoods for observations.
+        """
         predictors, responses = input[:, :-1], input[:, -1]
-        nans = np.isnan(responses)
+        nans = np.isnan(responses)  # can come from cross-validation
         probs = np.zeros((input.shape[0], 2))
         out = np.zeros(input.shape[0])
         # I could possibly save the 1 / ..., since it's logged it's just - log (but the other half of the probs is an issue)
@@ -99,6 +102,11 @@ class Dynamic_GLM(GibbsSampling):
 
     # Gibbs sampling
     def resample(self, data=[]):
+        """
+        Resampling of dynamic logistic random variables.
+        We follow the resampling scheme of Windle: "Efficient Data Augmentation in Dynamic Models for Binary and Count Data".
+        This makes use of the forward filter backwards sample algorithm. Which uses Kalman filtering, for which we use Anderson & Moore 1979
+        """
         # TODO: Clean up this mess, I always have to call delete_obs_data because of all the saved shit!
         self.psi_diff_saves = []
         summary_statistics, all_times = self._get_statistics(data)
@@ -136,17 +144,19 @@ class Dynamic_GLM(GibbsSampling):
             if k in timepoint_map:
                 self.pseudo_Q[timepoint_map[k]] = self.Q[k]  # for every timepoint, map it's variance onto the pseudo_Q
 
-        """sample pseudo obs"""
+        """Prepare for pseudo-observation sampling"""
         temp = np.empty(actual_obs_count)
         psis = np.empty(actual_obs_count)
-        psi_count = 0
+        psi_counter = 0
         predictors = []
         for type, time in zip(types, all_times):
             for t in type:
-                psis[psi_count] = np.sum(self.weights[time] * t)
+                psis[psi_counter] = np.sum(self.weights[time] * t)
                 predictors.append(t)
-                psi_count += 1
+                psi_counter += 1
 
+        # Here we use the pg package to draw augmenting variable from a polya-gamma distribution
+        # Windle calls the counts b_t = a_t + d_t, just the total number of times a psi has been seen. temp is the array in which our draws will be saved
         ppgs.pgdrawv(np.concatenate(counts).astype(float), psis, temp)
         self.R = np.zeros(total_types)
         mask = np.ones(total_types, dtype=np.bool)
@@ -239,8 +249,9 @@ class Dynamic_GLM(GibbsSampling):
         """Sigmas can be precomputed (without z), we do this here."""
         # We rely on the fact that H.T.dot(sigma).dot(H) is just a number, no matrix inversion needed
         # furthermore we use the fact that many matrices are identities, namely F and G
+        # We follow Anderson & Moore 1979, equations are listed where applicable
         self.sigma_k = []  # we have to reset this for repeating this calculation later for the resampling (R changes)
-        self.sigma_k_k_minus = [self.P_0]
+        self.sigma_k_k_minus = [self.P_0]  # (1.10)
         self.gain_save = []
         for k in range(T):
             if self.R[k] == 0:
