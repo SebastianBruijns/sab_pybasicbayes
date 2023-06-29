@@ -1,3 +1,4 @@
 *.pyc
 *.pyo
 /tags
+/pybasicbayes/distributions/dynglm_timing_test.py
