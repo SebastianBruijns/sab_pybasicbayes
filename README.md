@@ -1,5 +1,21 @@
 [![Build Status](https://travis-ci.org/mattjj/pybasicbayes.svg?branch=master)](https://travis-ci.org/mattjj/pybasicbayes)
 
+This is an edit to the existing pybasicbayes package by [Matt Johnson](https://github.com/mattjj), [Alex Wiltschko](https://github.com/alexbw), [Yarden Katz](https://github.com/yarden), [Nick Foti](https://github.com/nfoti), and [Scott Linderman](https://github.com/slinderman). It is specifically adapted for the purpose of implementing a HDP-HSMM (infinite hidden Markov model with duration distributions) with dynamic logistic regression as observation distributions.
+
+Install together with sab_pyhsmm like this:
+
+```python
+conda create -n hdp_env_test python=3.7 pip numpy scipy matplotlib cython nose future requests 
+conda activate hdp_env_test
+
+pip install pypolyagamma
+
+pip install git+ssh://git@gitlab.tuebingen.mpg.de/agpd/sab_pybasicbayes.git
+pip install git+ssh://git@gitlab.tuebingen.mpg.de/agpd/sab_pyhsmm.git
+```
+
+## Original readme: ##
+
 This library provides objects that model probability distributions and the
 related operations that are common in generative Bayesian modeling and Bayesian
 inference, including Gibbs sampling and variational mean field algorithms. The
